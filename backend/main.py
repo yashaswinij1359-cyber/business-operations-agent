@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional, Dict, Any
 
 
@@ -16,7 +16,6 @@ try:
 
 except Exception as e:
     ask_business_agent = None
-
     AGENT_AVAILABLE = False
     AGENT_ERROR = str(e)
 
@@ -35,39 +34,45 @@ app = FastAPI(
 
 
 # =========================================================
-# CORS CONFIGURATION
+# CORS
 # =========================================================
-ALLOWED_ORIGINS = [
-    "https://business-operations-agent.vercel.app",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
+
 
 # =========================================================
 # REQUEST MODEL
 # =========================================================
 
 class AgentRequest(BaseModel):
+    """
+    Accepts the format currently being sent by the frontend.
 
-    message: str = Field(..., min_length=1)
+    Frontend:
+    {
+        "question": "...",
+        "business_data": {...}
+    }
+    """
+
+    question: Optional[str] = None
+
+    business_data: Optional[Dict[str, Any]] = None
+
+    # Also support the older format
+    message: Optional[str] = None
 
     context: Optional[Dict[str, Any]] = None
 
 
 # =========================================================
-# ROOT ENDPOINT
+# ROOT
 # =========================================================
 
 @app.get("/")
@@ -95,7 +100,7 @@ async def health_check():
 
 
 # =========================================================
-# STATUS ENDPOINT
+# STATUS
 # =========================================================
 
 @app.get("/api/status")
@@ -109,26 +114,39 @@ async def status():
 
 
 # =========================================================
-# AI AGENT ENDPOINT
+# AI AGENT
 # =========================================================
 
 @app.post("/api/agent")
 async def business_agent(request: AgentRequest):
 
     # -----------------------------------------------------
-    # Validate message
+    # Get question
     # -----------------------------------------------------
 
-    if not request.message.strip():
+    question = request.question or request.message
+
+    if not question or not question.strip():
 
         raise HTTPException(
             status_code=400,
-            detail="Message cannot be empty."
+            detail="Question/message cannot be empty."
         )
 
 
     # -----------------------------------------------------
-    # Check agent
+    # Get business data
+    # -----------------------------------------------------
+
+    business_data = (
+        request.business_data
+        or request.context
+        or {}
+    )
+
+
+    # -----------------------------------------------------
+    # Check AI agent
     # -----------------------------------------------------
 
     if not AGENT_AVAILABLE or ask_business_agent is None:
@@ -142,43 +160,38 @@ async def business_agent(request: AgentRequest):
         )
 
 
-    # -----------------------------------------------------
-    # Business context
-    # -----------------------------------------------------
-
-    context = request.context or {}
-
-
     try:
 
         print("======================================")
         print("BUSINESS AGENT REQUEST")
-        print("Message:", request.message)
-        print("Context:", context)
+        print("QUESTION:")
+        print(question)
+        print()
+        print("BUSINESS DATA:")
+        print(business_data)
         print("======================================")
 
 
         # -------------------------------------------------
-        # Call AI agent
+        # Call your existing AI agent
         # -------------------------------------------------
 
         result = ask_business_agent(
-            request.message,
-            context
+            question,
+            business_data
         )
 
 
         # -------------------------------------------------
-        # Handle async agent functions
+        # Support async agent
         # -------------------------------------------------
 
         if hasattr(result, "__await__"):
-
             result = await result
 
 
         # -------------------------------------------------
-        # Return dictionary response
+        # Return dictionary
         # -------------------------------------------------
 
         if isinstance(result, dict):
@@ -187,7 +200,7 @@ async def business_agent(request: AgentRequest):
 
 
         # -------------------------------------------------
-        # Return normal text response
+        # Return text
         # -------------------------------------------------
 
         return {
@@ -211,9 +224,8 @@ async def business_agent(request: AgentRequest):
 
 
 # =========================================================
-# BACKWARD COMPATIBILITY
+# OLD /ASK ENDPOINT
 # =========================================================
-# If your old frontend calls /ask, it will still work.
 
 @app.post("/ask")
 async def ask_agent(request: AgentRequest):
