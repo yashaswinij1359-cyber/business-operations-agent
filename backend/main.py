@@ -1,25 +1,30 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
+
 # =========================================================
-# IMPORT AI AGENT
+# AI AGENT IMPORT
 # =========================================================
 
 try:
     from agent import ask_business_agent
+
     AGENT_AVAILABLE = True
     AGENT_ERROR = None
 
 except Exception as e:
     ask_business_agent = None
+
     AGENT_AVAILABLE = False
     AGENT_ERROR = str(e)
 
+    print("Agent import error:", AGENT_ERROR)
+
 
 # =========================================================
-# APP
+# FASTAPI APP
 # =========================================================
 
 app = FastAPI(
@@ -30,29 +35,39 @@ app = FastAPI(
 
 
 # =========================================================
-# CORS
+# CORS CONFIGURATION
 # =========================================================
-# IMPORTANT:
-# Your Vercel frontend must be included here.
 
-origins = [
-    # Production frontend
-    "http://business-operations-agent.vercel.app",
+# Exact allowed frontend origins
+ALLOWED_ORIGINS = [
+    "https://business-operations-agent.vercel.app",
 
-    # Local development
+    # Local React/Vite
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 
+    # Local React/CRA
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+
+    # Exact origins
+    allow_origins=ALLOWED_ORIGINS,
+
+    # Allow Vercel preview deployments too
+    allow_origin_regex=r"https://.*\.vercel\.app",
+
     allow_credentials=True,
+
     allow_methods=["*"],
+
     allow_headers=["*"],
+
+    expose_headers=["*"],
 )
 
 
@@ -61,17 +76,19 @@ app.add_middleware(
 # =========================================================
 
 class AgentRequest(BaseModel):
-    message: str
 
-    context: Optional[Dict[str, Any]] = {}
+    message: str = Field(..., min_length=1)
+
+    context: Optional[Dict[str, Any]] = None
 
 
 # =========================================================
-# ROOT
+# ROOT ENDPOINT
 # =========================================================
 
 @app.get("/")
-def root():
+async def root():
+
     return {
         "status": "online",
         "message": "Business Operations Agent API is running",
@@ -84,7 +101,7 @@ def root():
 # =========================================================
 
 @app.get("/api/health")
-def health_check():
+async def health_check():
 
     return {
         "status": "ok",
@@ -94,11 +111,11 @@ def health_check():
 
 
 # =========================================================
-# AGENT STATUS
+# STATUS ENDPOINT
 # =========================================================
 
 @app.get("/api/status")
-def agent_status():
+async def status():
 
     return {
         "backend": "online",
@@ -108,25 +125,27 @@ def agent_status():
 
 
 # =========================================================
-# AI BUSINESS AGENT
+# AI AGENT ENDPOINT
 # =========================================================
 
 @app.post("/api/agent")
 async def business_agent(request: AgentRequest):
 
-    # ---------------------------------------------
-    # Check message
-    # ---------------------------------------------
+    # -----------------------------------------------------
+    # Validate message
+    # -----------------------------------------------------
 
     if not request.message.strip():
+
         raise HTTPException(
             status_code=400,
             detail="Message cannot be empty."
         )
 
-    # ---------------------------------------------
-    # Check AI agent
-    # ---------------------------------------------
+
+    # -----------------------------------------------------
+    # Check agent
+    # -----------------------------------------------------
 
     if not AGENT_AVAILABLE or ask_business_agent is None:
 
@@ -138,46 +157,68 @@ async def business_agent(request: AgentRequest):
             }
         )
 
-    # ---------------------------------------------
-    # Prepare business context
-    # ---------------------------------------------
+
+    # -----------------------------------------------------
+    # Business context
+    # -----------------------------------------------------
 
     context = request.context or {}
 
+
     try:
 
-        # -----------------------------------------
+        print("======================================")
+        print("BUSINESS AGENT REQUEST")
+        print("Message:", request.message)
+        print("Context:", context)
+        print("======================================")
+
+
+        # -------------------------------------------------
         # Call AI agent
-        # -----------------------------------------
+        # -------------------------------------------------
 
         result = ask_business_agent(
             request.message,
             context
         )
 
-        # -----------------------------------------
-        # Support async agent functions
-        # -----------------------------------------
+
+        # -------------------------------------------------
+        # Handle async agent functions
+        # -------------------------------------------------
 
         if hasattr(result, "__await__"):
+
             result = await result
 
-        # -----------------------------------------
-        # Return response
-        # -----------------------------------------
+
+        # -------------------------------------------------
+        # Return dictionary response
+        # -------------------------------------------------
 
         if isinstance(result, dict):
 
             return result
+
+
+        # -------------------------------------------------
+        # Return normal text response
+        # -------------------------------------------------
 
         return {
             "success": True,
             "response": str(result)
         }
 
+
     except Exception as e:
 
-        print("AI AGENT ERROR:", str(e))
+        print("======================================")
+        print("AI AGENT ERROR")
+        print(str(e))
+        print("======================================")
+
 
         raise HTTPException(
             status_code=500,
@@ -186,10 +227,9 @@ async def business_agent(request: AgentRequest):
 
 
 # =========================================================
-# OPTIONAL ALIAS
+# BACKWARD COMPATIBILITY
 # =========================================================
-# This allows older frontend code using /ask to continue
-# working.
+# If your old frontend calls /ask, it will still work.
 
 @app.post("/ask")
 async def ask_agent(request: AgentRequest):
@@ -198,7 +238,7 @@ async def ask_agent(request: AgentRequest):
 
 
 # =========================================================
-# SERVER START
+# RUN LOCALLY
 # =========================================================
 
 if __name__ == "__main__":
