@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 # DO NOT put your Gemini API key here.
 # ---------------------------------------------------------
 
-FRONTEND_URL = "https://YOUR-OPS-AI-APP.vercel.app"
+FRONTEND_URL = "business-operations-agent.vercel.app"
 
 
 # =========================================================
@@ -261,5 +261,5 @@ def status():
         "backend": "online",
         "agent": "online" if ask_business_agent else "offline",
         "gemini": "configured" if GEMINI_API_KEY else "missing",
-        "frontend": business-operations-agent.vercel.app
+        "frontend":FRONTEND_URL
     }
