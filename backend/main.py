@@ -37,7 +37,7 @@ app = FastAPI(
 
 origins = [
     # Production frontend
-    "business-operations-agent.vercel.app",
+    "http://business-operations-agent.vercel.app",
 
     # Local development
     "http://localhost:5173",
