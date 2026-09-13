@@ -1,57 +1,7 @@
-import os
-from typing import Dict, Any
-
-from dotenv import load_dotenv
-
-# =========================================================
-# LOAD ENVIRONMENT VARIABLES
-# =========================================================
-# IMPORTANT:
-# Load .env BEFORE importing agent.py.
-# This allows agent.py to read GEMINI_API_KEY correctly.
-
-load_dotenv()
-
-
-# =========================================================
-# FASTAPI IMPORTS
-# =========================================================
-
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-
-
-# =========================================================
-# FRONTEND URL
-# =========================================================
-
-# ---------------------------------------------------------
-# ADD YOUR VERCEL FRONTEND LINK HERE
-# ---------------------------------------------------------
-#
-# Example:
-# FRONTEND_URL = "https://opsai-agent.vercel.app"
-#
-# Replace the URL below with YOUR actual Vercel URL.
-#
-# DO NOT put your Gemini API key here.
-# ---------------------------------------------------------
-
-FRONTEND_URL = "business-operations-agent.vercel.app"
-
-
-# =========================================================
-# GEMINI API KEY CHECK
-# =========================================================
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if GEMINI_API_KEY:
-    print("✅ GEMINI_API_KEY loaded successfully")
-else:
-    print("⚠️ GEMINI_API_KEY is missing")
-
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
 
 # =========================================================
 # IMPORT AI AGENT
@@ -59,27 +9,22 @@ else:
 
 try:
     from agent import ask_business_agent
-
-    ask_business_agent = ask_business_agent
-    agent_import_error = None
-
-    print("✅ AI Agent module loaded successfully")
+    AGENT_AVAILABLE = True
+    AGENT_ERROR = None
 
 except Exception as e:
     ask_business_agent = None
-    agent_import_error = str(e)
-
-    print("❌ Failed to load AI Agent module")
-    print("Error:", agent_import_error)
+    AGENT_AVAILABLE = False
+    AGENT_ERROR = str(e)
 
 
 # =========================================================
-# FASTAPI APP
+# APP
 # =========================================================
 
 app = FastAPI(
-    title="OPSAI - Business Operations Agent",
-    description="AI-powered Business Operations Automation",
+    title="Business Operations Agent",
+    description="AI-powered business operations automation agent",
     version="1.0.0"
 )
 
@@ -87,31 +32,24 @@ app = FastAPI(
 # =========================================================
 # CORS
 # =========================================================
+# IMPORTANT:
+# Your Vercel frontend must be included here.
 
-# These URLs are allowed to communicate with the backend.
-#
-# LOCAL DEVELOPMENT:
-# http://localhost:5173
-# http://127.0.0.1:5173
-#
-# DEPLOYED FRONTEND:
-# Your Vercel URL is added using FRONTEND_URL above.
+origins = [
+    # Production frontend
+    "business-operations-agent.vercel.app",
 
-allowed_origins = [
+    # Local development
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 
-# Add Vercel URL if it is a real URL
-if FRONTEND_URL.startswith("http"):
-    allowed_origins.append(FRONTEND_URL)
-
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -123,22 +61,21 @@ app.add_middleware(
 # =========================================================
 
 class AgentRequest(BaseModel):
-    question: str
-    business_data: Dict[str, Any] = Field(default_factory=dict)
+    message: str
+
+    context: Optional[Dict[str, Any]] = {}
 
 
 # =========================================================
-# ROOT ENDPOINT
+# ROOT
 # =========================================================
 
 @app.get("/")
 def root():
     return {
         "status": "online",
-        "message": "OPSAI Backend is running",
-        "agent_endpoint": "/api/agent",
-        "health_endpoint": "/api/health",
-        "docs": "/docs"
+        "message": "Business Operations Agent API is running",
+        "version": "1.0.0"
     }
 
 
@@ -147,28 +84,26 @@ def root():
 # =========================================================
 
 @app.get("/api/health")
-def health():
+def health_check():
 
     return {
         "status": "ok",
-        "message": "OPSAI backend is running",
-        "agent_loaded": ask_business_agent is not None,
-        "gemini_configured": bool(GEMINI_API_KEY)
+        "backend": "online",
+        "agent": "online" if AGENT_AVAILABLE else "offline"
     }
 
 
 # =========================================================
-# AGENT INFORMATION
+# AGENT STATUS
 # =========================================================
 
-@app.get("/api/agent")
-def agent_info():
+@app.get("/api/status")
+def agent_status():
 
     return {
-        "status": "ok",
-        "message": "Agent endpoint is available.",
-        "method": "POST",
-        "endpoint": "/api/agent"
+        "backend": "online",
+        "agent_available": AGENT_AVAILABLE,
+        "agent_error": AGENT_ERROR
     }
 
 
@@ -177,89 +112,102 @@ def agent_info():
 # =========================================================
 
 @app.post("/api/agent")
-def agent(request: AgentRequest):
+async def business_agent(request: AgentRequest):
 
-    # -----------------------------------------------------
-    # Clean question
-    # -----------------------------------------------------
+    # ---------------------------------------------
+    # Check message
+    # ---------------------------------------------
 
-    question = request.question.strip()
+    if not request.message.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Message cannot be empty."
+        )
 
-    if not question:
-        return {
-            "status": "error",
-            "answer": "Please enter a business question."
-        }
-
-
-    # -----------------------------------------------------
-    # Check Gemini API key
-    # -----------------------------------------------------
-
-    if not GEMINI_API_KEY:
-
-        return {
-            "status": "error",
-            "answer": "Gemini API key is missing. Please configure GEMINI_API_KEY in the backend environment."
-        }
-
-
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # Check AI agent
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
-    if ask_business_agent is None:
+    if not AGENT_AVAILABLE or ask_business_agent is None:
 
-        return {
-            "status": "error",
-            "answer": "AI Agent could not be loaded.",
-            "error": agent_import_error
-        }
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "AI agent is not available.",
+                "error": AGENT_ERROR
+            }
+        )
 
+    # ---------------------------------------------
+    # Prepare business context
+    # ---------------------------------------------
 
-    # -----------------------------------------------------
-    # Call AI agent
-    # -----------------------------------------------------
+    context = request.context or {}
 
     try:
 
+        # -----------------------------------------
+        # Call AI agent
+        # -----------------------------------------
+
         result = ask_business_agent(
-            question,
-            request.business_data
+            request.message,
+            context
         )
 
-        # If agent returns a dictionary
+        # -----------------------------------------
+        # Support async agent functions
+        # -----------------------------------------
+
+        if hasattr(result, "__await__"):
+            result = await result
+
+        # -----------------------------------------
+        # Return response
+        # -----------------------------------------
+
         if isinstance(result, dict):
+
             return result
 
-        # If agent returns normal text
         return {
-            "status": "success",
-            "answer": str(result)
+            "success": True,
+            "response": str(result)
         }
 
+    except Exception as e:
 
-    except Exception as error:
+        print("AI AGENT ERROR:", str(e))
 
-        print("❌ AI Agent Error:", str(error))
-
-        return {
-            "status": "error",
-            "answer": "The AI agent encountered an error.",
-            "error": str(error)
-        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI agent failed: {str(e)}"
+        )
 
 
 # =========================================================
-# SERVER START MESSAGE
+# OPTIONAL ALIAS
+# =========================================================
+# This allows older frontend code using /ask to continue
+# working.
+
+@app.post("/ask")
+async def ask_agent(request: AgentRequest):
+
+    return await business_agent(request)
+
+
+# =========================================================
+# SERVER START
 # =========================================================
 
-@app.get("/api/status")
-def status():
+if __name__ == "__main__":
 
-    return {
-        "backend": "online",
-        "agent": "online" if ask_business_agent else "offline",
-        "gemini": "configured" if GEMINI_API_KEY else "missing",
-        "frontend":FRONTEND_URL
-    }
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )
